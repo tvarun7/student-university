@@ -1,0 +1,24 @@
+import {pathToFileURL} from 'node:url';
+import {randomUUID,randomBytes} from 'node:crypto';
+import {writeFile} from 'node:fs/promises';
+import {db,initDb} from './db.js';
+import {hashPassword,strongPassword} from './security.js';
+export async function seed({writeCredentials=true}={}){
+ if(process.env.NODE_ENV==='production')throw new Error('Demo seeding is disabled in production');
+ await initDb();
+ if((await db.query('SELECT id FROM users LIMIT 1')).rows.length)throw new Error('Database already contains users. Seed refused to protect existing records.');
+ if(process.env.DEMO_PASSWORD&&!strongPassword(process.env.DEMO_PASSWORD))throw new Error('DEMO_PASSWORD must have 12–128 characters');
+ const users=[['admin.demo','Demo Administrator','admin'],['staff.demo','Dr. Asha Rao','staff'],['student.demo','Alex Student','student'],['parent.demo','Demo Parent','parent'],['staff.other','Dr. Ravi Kumar','staff'],['student.other','Sam Student','student']];
+ const created={};const credentials=[];
+ for(const [username,name,role] of users){const id=randomUUID(),password=process.env.DEMO_PASSWORD||randomBytes(18).toString('base64url');created[username]={id,password,role};await db.query('INSERT INTO users(id,username,name,role,password_hash,department,semester,child_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,username,name,role,await hashPassword(password),'Computer Science','2-1',role==='parent'?created['student.demo'].id:null]);credentials.push(username+' ('+role+'): '+password);}
+ const schemes=[['SU206','AI Assisted Coding',[['project','Course Project',20],['lab1','Lab Test 1',20],['lab2','Lab Test 2',20],['end_lab','End Lab Exam',40]]],['SU205','Cloud Computing',[['mid','Mid Term Examination',30],['product','Product Evaluation',30],['end','End Term Examination',40]]],['SU201','Data Analytics and Visualization',[['mid','Mid Term Examination',20],['lab','Lab Test',10],['project','Project',30],['end','End Term Examination',40]]],['SU204','Web Technologies and Mobile Programming',[['mid','Mid Term Examination',20],['project','Course Project',40],['end','End Term Examination',40]]],['SU202','Information Management System',[['mid','Mid Term Examination',40],['lab','Lab Exam',20],['end','End Term Examination',40]]],['SU203','Operating Systems and Computer Networks',[['mid','Mid Term Examination',20],['lab','Lab Exam',10],['continuous','Continuous Lab Evaluation',10],['product','Product Evaluation',20],['end','End Term Examination',40]]]];
+ const courses=[];
+ for(let i=0;i<schemes.length;i++){const [code,name,parts]=schemes[i],id=randomUUID(),components=parts.map(([key,label,max])=>({key,label,max}));courses.push(id);await db.query('INSERT INTO courses(id,code,name,staff_id,semester,components) VALUES($1,$2,$3,$4,$5,$6)',[id,code,name,created[i===5?'staff.other':'staff.demo'].id,'2-1',JSON.stringify(components)]);
+ for(const username of ['student.demo','student.other']){const sid=created[username].id;await db.query('INSERT INTO enrollments(student_id,course_id) VALUES($1,$2)',[sid,id]);const marks=Object.fromEntries(components.map((c,j)=>[c.key,j===0?Math.round(c.max*(i%2?.55:.8)):null]));await db.query('INSERT INTO marks(student_id,course_id,values_json) VALUES($1,$2,$3)',[sid,id,JSON.stringify(marks)]);for(let d=1;d<=8;d++){const day=new Date();day.setUTCDate(day.getUTCDate()-d);await db.query('INSERT INTO attendance(student_id,course_id,date,slot,present) VALUES($1,$2,$3,$4,$5)',[sid,id,day.toISOString().slice(0,10),1,(d+i)%4!==0]);}}
+ const future=new Date();future.setUTCDate(future.getUTCDate()+14+i);await db.query('INSERT INTO timetable(id,course_id,date,time,room) VALUES($1,$2,$3,$4,$5)',[randomUUID(),id,future.toISOString().slice(0,10),'09:30–11:00','Demo Hall '+(i+1)]);
+ }
+ for(const [title,type,body] of [['Welcome to Student University','General','This is an independent academic project with fictional sample records. It is not affiliated with SR University.'],['Semester assessment schedule','Exam','Sample exam dates are available after login. Verify real dates with your university.'],['Faculty feedback is open','Academic','Students can submit identified feedback for each enrolled course.'],['Academic mentoring sessions','General','Contact your teaching faculty for guidance on attendance and assessments.']])await db.query('INSERT INTO notices(id,title,type,body,date) VALUES($1,$2,$3,$4,$5)',[randomUUID(),title,type,body,new Date().toISOString().slice(0,10)]);
+ if(writeCredentials){await writeFile('demo-credentials.txt','LOCAL DEMO ONLY — do not commit or share publicly.\n'+credentials.join('\n')+'\n');console.log('Seed complete. Credentials saved in ignored demo-credentials.txt');}
+ return {users:created,courses};
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){try{await seed();}finally{await db.close();}}
