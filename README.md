@@ -67,26 +67,19 @@ These CREATE TABLE statements bootstrap a new database; they are not a versioned
 
 Without configuration, students receive **local rule-based analysis**, not generative AI. It calculates attendance and assessed marks, flags areas to review, and treats unassessed values as null rather than zero. The 75% attendance target is a demo assumption, not an official university rule.
 
-To use the provided OpenAI adapter:
+To use Google Gemini from Google AI Studio:
 
-1. Create an API account/project at https://platform.openai.com/ and enable API billing if required. API usage is billed separately from consumer chat subscriptions. Choose a spending limit you can manage.
-2. Create an API key through the provider dashboard. Never paste it into chat, Angular code, GitHub, screenshots or a public web page.
-3. Edit your server's private `.env`:
+1. Create a Gemini API key at https://aistudio.google.com/api-keys. Check the model's current quota, billing and data-use terms. Keep the project on the Free tier without enabling billing. Use a free-tier text model such as gemini-3.5-flash-lite only if available to the project. Google may use free-tier content to improve products; use fictional records for this demonstration.
+2. In Render, open the student-university service → Environment. Store GEMINI_API_KEY as a private environment value. Never paste the key into chat, Angular source, GitHub, screenshots or public pages.
+3. Set GEMINI_MODEL to an available generateContent-compatible text model from your Google project (use its API model ID, not its display name). Set AI_ENABLED=true only when ready to allow external analysis. No model is hard-coded, because availability changes. Redeploy after saving.
+4. Sign in as a Student, open Study assistant, and explicitly consent to sending the question and scoped course names, assessment scores/maxima and attendance to Google Gemini. Without consent, the request is rejected before any provider request. Do not include personal information in the question.
+5. Ask for a study plan. A successful response has mode ai and provider gemini. Provider failures are shown as errors, not disguised as local analysis. With AI_ENABLED=false, the assistant remains local and sends nothing to Google.
 
-   ```dotenv
-   AI_ENABLED=true
-   OPENAI_API_KEY=your_private_api_key
-   OPENAI_MODEL=gpt-4.1-mini
-   ```
+The existing authenticated student-only route, CSRF checks, five-requests-per-minute limiter, per-student record scope, 30-second provider timeout and read-only behavior remain in place. Academic-record payloads exclude names, account IDs and feedback. The question itself is sent as typed, so it can contain personal information if the student enters it. The assistant has no tools for updating records. Obtain institutional approval and review Google's current data-use/retention terms before using real student records.
 
-   Use a chat-completions-compatible model available to your API project. The default is configurable; availability and price can change.
-4. Restart the Node server. On a host, set these as service environment variables instead of committing a `.env` file.
-5. Sign in as a student. Open the assistant and check the consent box only if you agree to transmit that student's course names, assessment scores/maxima and attendance statistics to OpenAI.
-6. Ask for a study plan. A successful response is labelled AI rather than local. If the provider returns an error, check the server key, model permissions, quota and billing. The app does not silently label a failed external call as AI.
+The server calls Google's generateContent REST API using its built-in fetch; no browser SDK or extra dependency is needed. OPENAI_API_KEY and OPENAI_MODEL are no longer used by this adapter. Roll back external analysis by setting AI_ENABLED=false and redeploying.
 
-The browser calls **your server**; only the server calls OpenAI. The assistant has no tools for updating records. The payload intentionally excludes names, account IDs and feedback. This reduces disclosure but is not a guarantee of anonymity: academic data can still be sensitive. Use fictional data for a class demo; obtain institutional approval and review privacy/retention terms before sending real student records.
-
-Reference: https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+Reference: https://ai.google.dev/api/generate-content
 
 ## 3. Publish the source to GitHub
 
