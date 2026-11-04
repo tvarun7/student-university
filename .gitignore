@@ -1,0 +1,11 @@
+node_modules/
+client/node_modules/
+client/dist/
+client/.angular/
+.env
+.env.*
+!.env.example
+.data/
+coverage/
+demo-credentials.txt
+*.log
