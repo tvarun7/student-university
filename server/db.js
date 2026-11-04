@@ -4,7 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 const production=process.env.NODE_ENV==='production';
 if(production && !process.env.DATABASE_URL) throw new Error('Production requires DATABASE_URL');
-export const pool=process.env.DATABASE_URL ? new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:true}:undefined}) : null;
+export const pool=process.env.TEST_DB!=='true'&&process.env.DATABASE_URL ? new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:true}:undefined}) : null;
 if(!pool&&process.env.TEST_DB!=='true')await mkdir('./.data',{recursive:true});
 const embedded=pool?null:new PGlite(process.env.TEST_DB==='true'?undefined:'./.data/postgres');
 export const db={query:(sql,args=[])=>pool?pool.query(sql,args):embedded.query(sql,args),close:()=>pool?pool.end():embedded.close()};
