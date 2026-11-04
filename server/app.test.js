@@ -1,8 +1,8 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-process.env.TEST_DB='true';process.env.NODE_ENV='test';process.env.SESSION_SECRET='test-secret-not-used-outside-test-process-123';process.env.AI_ENABLED='false';
-const {app}=await import('./app.js');const {db}=await import('./db.js');const {seed}=await import('./seed.js');
+process.env.DATABASE_URL='postgresql://invalid-test-only:invalid@127.0.0.1:1/do-not-connect';process.env.TEST_DB='true';process.env.NODE_ENV='test';process.env.SESSION_SECRET='test-secret-not-used-outside-test-process-123';process.env.AI_ENABLED='false';
+const {app}=await import('./app.js');const {db,pool}=await import('./db.js');const {seed}=await import('./seed.js');
 let data,admin,staff,student,parent,otherStaff,otherStudent;
 async function login(username){const agent=request.agent(app);let r=await agent.get('/api/auth/session');const u=data.users[username];r=await agent.post('/api/auth/login').set('X-CSRF-Token',r.body.csrfToken).send({username,password:u.password,role:u.role});assert.equal(r.status,200);return {agent,token:r.body.csrfToken,user:r.body.user};}
 const write=(client,method,url,body)=>client.agent[method](url).set('X-CSRF-Token',client.token).send(body);
@@ -39,3 +39,45 @@ test('external AI requires consent before network request',async()=>{process.env
 test('non-admin cannot create course or enrollment',async()=>{for(const route of ['/api/courses','/api/enrollments'])assert.equal((await write(staff,'post',route,{})).status,403);});
 
 test('AI adapter sends scoped academic data without identity and returns provider text',async()=>{const original=globalThis.fetch;let payload;process.env.AI_ENABLED='true';process.env.OPENAI_API_KEY='test-placeholder-not-a-real-key';globalThis.fetch=async(url,options)=>{assert.equal(url,'https://api.openai.com/v1/chat/completions');payload=JSON.parse(options.body);return {ok:true,json:async()=>({choices:[{message:{content:'Practice the lowest-scoring assessed topics.'}}]})};};try{const r=await write(student,'post','/api/assistant',{question:'Help me study',consent:true});assert.equal(r.status,200);assert.equal(r.body.mode,'ai');const recordPayload=JSON.parse(payload.messages[1].content);assert.ok(recordPayload.records.length>0);assert.ok(!payload.messages[1].content.includes(student.user.id));assert.ok(!payload.messages[1].content.includes('Alex Student'));assert.ok(!payload.messages[1].content.includes('Sam Student'));assert.ok(!('tools' in payload));}finally{globalThis.fetch=original;process.env.AI_ENABLED='false';delete process.env.OPENAI_API_KEY;}});
+
+
+test('TEST_DB ignores an external DATABASE_URL and uses isolated PGlite',async()=>{
+ assert.equal(pool,null);
+ assert.equal((await db.query('SELECT 1 AS value')).rows[0].value,1);
+});
+
+test('login preserves password whitespace at creation and after password change',async()=>{
+ const username='whitespace.password',password='  boundary-password-123  ';
+ assert.equal((await write(admin,'post','/api/users',{username,name:'Password Test',role:'student',password})).status,201);
+ async function signIn(value){const agent=request.agent(app),session=await agent.get('/api/auth/session');const response=await agent.post('/api/auth/login').set('X-CSRF-Token',session.body.csrfToken).send({username,password:value,role:'student'});return {agent,response};}
+ let signed=await signIn(password);assert.equal(signed.response.status,200);
+ assert.equal((await signIn(password.trim())).response.status,401);
+ const nextPassword=' '.repeat(12);
+ assert.equal((await write({agent:signed.agent,token:signed.response.body.csrfToken},'post','/api/auth/password',{currentPassword:password,newPassword:nextPassword})).status,200);
+ assert.equal((await signed.agent.get('/api/records')).status,401);
+ assert.equal((await signIn(nextPassword)).response.status,200);
+});
+
+test('login rejects empty non-string and overlength passwords',async()=>{
+ const agent=request.agent(app),session=await agent.get('/api/auth/session');
+ for(const password of ['',123,'x'.repeat(129)])assert.equal((await agent.post('/api/auth/login').set('X-CSRF-Token',session.body.csrfToken).send({username:'student.demo',password,role:'student'})).status,400);
+});
+
+test('existing feedback follows current course assignment',async()=>{
+ const courseId=data.courses[0];
+ const before=(await staff.agent.get('/api/feedback')).body;assert.ok(before.length>0);
+ const feedbackId=before[0].id;
+ assert.equal((await write(admin,'put','/api/courses/'+courseId,{staff_id:otherStaff.user.id})).status,200);
+ try{
+  const former=await staff.agent.get('/api/feedback'),current=await otherStaff.agent.get('/api/feedback');
+  assert.equal(former.status,200);assert.equal(current.status,200);
+  assert.ok(!former.body.some(f=>f.id===feedbackId));assert.ok(current.body.some(f=>f.id===feedbackId));
+ }finally{assert.equal((await write(admin,'put','/api/courses/'+courseId,{staff_id:staff.user.id})).status,200);}
+});
+
+test('malformed assessment components return validation errors',async()=>{
+ for(const component of [null,[],42,'invalid']){
+  const r=await write(admin,'post','/api/courses',{code:'INVALID-COMPONENT',name:'Invalid Component',staff_id:staff.user.id,semester:'2-1',components:[component]});
+  assert.equal(r.status,400);assert.equal(r.body.error,'Invalid assessment component');
+ }
+});
