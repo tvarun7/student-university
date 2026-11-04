@@ -35,10 +35,10 @@ test('security response headers present',async()=>{const r=await student.agent.g
 
 test('admin course creation assignment and enrollment',async()=>{const r=await write(admin,'post','/api/courses',{code:'EXTRA101',name:'Extra Demo Course',staff_id:staff.user.id,semester:'2-1',components:[{key:'exam',label:'Exam',max:100}]});assert.equal(r.status,201);const cid=r.body.id;assert.equal((await write(admin,'post','/api/enrollments',{course_id:cid,student_id:student.user.id})).status,200);assert.equal((await write(admin,'post','/api/enrollments',{course_id:cid,student_id:student.user.id})).status,200);assert.equal((await write(admin,'put','/api/courses/'+cid,{staff_id:otherStaff.user.id,name:'Reassigned Course'})).status,200);assert.equal((await write(staff,'put','/api/marks',{student_id:student.user.id,course_id:cid,marks:{exam:50}})).status,403);});
 test('invalid parent child link rejected',async()=>assert.equal((await write(admin,'post','/api/users',{username:'invalid.parent',name:'Parent',role:'parent',password:'sample-test-password-123',child_id:staff.user.id})).status,400));
-test('external AI requires consent before network request',async()=>{process.env.AI_ENABLED='true';process.env.OPENAI_API_KEY='test-placeholder-not-a-real-key';try{const r=await write(student,'post','/api/assistant',{question:'Help me improve',consent:false});assert.equal(r.status,400);assert.match(r.body.error,/Consent/);}finally{process.env.AI_ENABLED='false';delete process.env.OPENAI_API_KEY;}});
+test('external AI requires consent before network request',async()=>{const original=globalThis.fetch;globalThis.fetch=async()=>{throw new Error('No network request allowed without consent');};process.env.AI_ENABLED='true';process.env.GEMINI_API_KEY='test-placeholder-not-a-real-key';process.env.GEMINI_MODEL='test-model';try{const r=await write(student,'post','/api/assistant',{question:'Help me improve',consent:false});assert.equal(r.status,400);assert.match(r.body.error,/Consent/);}finally{globalThis.fetch=original;process.env.AI_ENABLED='false';delete process.env.GEMINI_API_KEY;delete process.env.GEMINI_MODEL;}});
 test('non-admin cannot create course or enrollment',async()=>{for(const route of ['/api/courses','/api/enrollments'])assert.equal((await write(staff,'post',route,{})).status,403);});
 
-test('AI adapter sends scoped academic data without identity and returns provider text',async()=>{const original=globalThis.fetch;let payload;process.env.AI_ENABLED='true';process.env.OPENAI_API_KEY='test-placeholder-not-a-real-key';globalThis.fetch=async(url,options)=>{assert.equal(url,'https://api.openai.com/v1/chat/completions');payload=JSON.parse(options.body);return {ok:true,json:async()=>({choices:[{message:{content:'Practice the lowest-scoring assessed topics.'}}]})};};try{const r=await write(student,'post','/api/assistant',{question:'Help me study',consent:true});assert.equal(r.status,200);assert.equal(r.body.mode,'ai');const recordPayload=JSON.parse(payload.messages[1].content);assert.ok(recordPayload.records.length>0);assert.ok(!payload.messages[1].content.includes(student.user.id));assert.ok(!payload.messages[1].content.includes('Alex Student'));assert.ok(!payload.messages[1].content.includes('Sam Student'));assert.ok(!('tools' in payload));}finally{globalThis.fetch=original;process.env.AI_ENABLED='false';delete process.env.OPENAI_API_KEY;}});
+test('AI adapter sends scoped academic data without identity and returns provider text',async()=>{const original=globalThis.fetch;let payload;process.env.AI_ENABLED='true';process.env.GEMINI_API_KEY='test-placeholder-not-a-real-key';process.env.GEMINI_MODEL='test-model';globalThis.fetch=async(url,options)=>{assert.equal(url,'https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent');assert.equal(options.headers['x-goog-api-key'],'test-placeholder-not-a-real-key');assert.ok(!url.includes('key='));payload=JSON.parse(options.body);return {ok:true,json:async()=>({candidates:[{finishReason:'STOP',content:{parts:[{text:'Practice the lowest-scoring assessed topics.'}]}}]})};};try{const r=await write(student,'post','/api/assistant',{question:'Help me study',consent:true});assert.equal(r.status,200);assert.equal(r.body.mode,'ai');const recordPayload=JSON.parse(payload.contents[0].parts[0].text);assert.ok(recordPayload.records.length>0);assert.ok(!payload.contents[0].parts[0].text.includes(student.user.id));assert.ok(!payload.contents[0].parts[0].text.includes('Alex Student'));assert.ok(!payload.contents[0].parts[0].text.includes('Sam Student'));assert.ok(!('tools' in payload));}finally{globalThis.fetch=original;process.env.AI_ENABLED='false';delete process.env.GEMINI_API_KEY;delete process.env.GEMINI_MODEL;}});
 
 
 test('TEST_DB ignores an external DATABASE_URL and uses isolated PGlite',async()=>{
@@ -80,4 +80,21 @@ test('malformed assessment components return validation errors',async()=>{
   const r=await write(admin,'post','/api/courses',{code:'INVALID-COMPONENT',name:'Invalid Component',staff_id:staff.user.id,semester:'2-1',components:[component]});
   assert.equal(r.status,400);assert.equal(r.body.error,'Invalid assessment component');
  }
+});
+
+
+test('Gemini rejects provider failures and empty responses without local fallback',async()=>{
+ const original=globalThis.fetch;process.env.AI_ENABLED='true';process.env.GEMINI_API_KEY='test-placeholder-not-a-real-key';process.env.GEMINI_MODEL='test-model';
+ try{
+  for(const response of [{ok:false},{ok:true,json:async()=>({candidates:[{finishReason:'STOP',content:{parts:[]}}]})}]){
+   globalThis.fetch=async()=>response;
+   const r=await write(student,'post','/api/assistant',{question:'Help me study',consent:true});
+   assert.equal(r.status,502);assert.ok(!r.body.answer);assert.ok(!JSON.stringify(r.body).includes(process.env.GEMINI_API_KEY));
+  }
+ }finally{globalThis.fetch=original;process.env.AI_ENABLED='false';delete process.env.GEMINI_API_KEY;delete process.env.GEMINI_MODEL;}
+});
+test('Gemini remains student-only and requires CSRF',async()=>{
+ for(const client of [admin,staff,parent])assert.equal((await write(client,'post','/api/assistant',{question:'Help',consent:true})).status,403);
+ assert.equal((await request(app).post('/api/assistant').send({question:'Help',consent:true})).status,403);
+ assert.equal((await student.agent.post('/api/assistant').send({question:'Help',consent:true})).status,403);
 });
