@@ -1,0 +1,21 @@
+import {test,after} from 'node:test';
+import assert from 'node:assert/strict';
+process.env.TEST_DB='true';process.env.NODE_ENV='test';
+const {db,initDb}=await import('./db.js');
+after(async()=>db.close());
+test('upgrade from original schema preserves passwords and academic rows and is idempotent',async()=>{
+ await db.query("CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('admin','staff','student','parent')),password_hash TEXT NOT NULL,department TEXT NOT NULL DEFAULT '',semester TEXT NOT NULL DEFAULT '',child_id TEXT REFERENCES users(id),active BOOLEAN NOT NULL DEFAULT true)");
+ await db.query('CREATE TABLE courses(id TEXT PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,staff_id TEXT NOT NULL REFERENCES users(id),semester TEXT NOT NULL,components JSONB NOT NULL)');
+ await db.query('CREATE TABLE attendance(student_id TEXT REFERENCES users(id),course_id TEXT REFERENCES courses(id),date DATE NOT NULL,slot INTEGER NOT NULL,present BOOLEAN NOT NULL,PRIMARY KEY(student_id,course_id,date,slot))');
+ await db.query("INSERT INTO users(id,username,name,role,password_hash) VALUES('admin','original.admin','Original Admin','admin','unchanged-original-hash'),('staff','original.staff','Original Staff','staff','unchanged-staff-hash'),('student','original.student','Original Student','student','unchanged-student-hash')");
+ await db.query("INSERT INTO courses(id,code,name,staff_id,semester,components) VALUES('course','ORIG','Original Course','staff','1','[{\"key\":\"exam\",\"label\":\"Exam\",\"max\":100}]')");
+ await db.query("INSERT INTO attendance(student_id,course_id,date,slot,present) VALUES('student','course','2026-01-01',17,true),('student','course','2026-01-02',1,true)");
+ await initDb();await initDb();
+ const users=(await db.query('SELECT * FROM users ORDER BY id')).rows;assert.equal(users[0].password_hash,'unchanged-original-hash');assert.equal(users[1].password_hash,'unchanged-staff-hash');assert.equal(users[2].password_hash,'unchanged-student-hash');assert.ok(users.every(u=>u.session_version===0&&u.batch_id===null));
+ const a=(await db.query('SELECT * FROM attendance')).rows;assert.equal(a.length,2);const unknown=a.find(r=>r.slot===17),known=a.find(r=>r.slot===1);assert.equal(unknown.present,true);assert.equal(unknown.start_time,null);assert.equal(known.start_time,'08:30');assert.equal(known.end_time,'09:30');await db.query("UPDATE attendance_slots SET start_time='06:00',end_time='07:00' WHERE id=1");await initDb();assert.equal((await db.query('SELECT start_time FROM attendance WHERE slot=1')).rows[0].start_time,'08:30');
+ assert.equal((await db.query('SELECT * FROM attendance_slots')).rows.length,9);
+ assert.equal((await db.query('SELECT * FROM schema_migrations')).rows.length,2);
+ await db.query("INSERT INTO courses(id,code,name,semester,components) VALUES('unassigned','NEW','Unassigned Course','1','[]')");
+ assert.equal((await db.query("SELECT staff_id FROM courses WHERE id='unassigned'")).rows[0].staff_id,null);
+ await db.query("UPDATE attendance_slots SET active=false WHERE id=1");await initDb();assert.equal((await db.query('SELECT active FROM attendance_slots WHERE id=1')).rows[0].active,false);
+});
