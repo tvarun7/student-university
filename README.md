@@ -2,18 +2,20 @@
 
 An independent university-portal demonstration inspired by the supplied layout references. This is not SR University's website, is not connected to sraap.in, and makes no ranking or accreditation claims. Sample names and records are fictional. Do not commit your reference screenshots: they contain personal information.
 
+For the department/batch upgrade and administrator setup sequence, read [UPGRADE-GUIDE.md](UPGRADE-GUIDE.md).
+
 ## What you can do
 
 Choose Admin, Staff, Student or Parent before signing in. Selecting Admin does not grant permission: the server verifies the account role.
 
 | Role | Allowed actions |
 |---|---|
-| Admin | Create/edit/deactivate staff, students and parents; assign faculty to courses; enroll students; view academic records |
-| Staff | Enter/update marks and attendance only for assigned courses; view feedback addressed to them |
+| Admin | Manage departments/batches, accounts and explicit non-admin password resets; define course assessments; assign staff by course/batch; enroll students; manage exam timetables, class slots, circulars and events; view but not write marks |
+| Staff | Enter/update individual or batch marks and attendance only for enrolled students in assigned course/batches; view scoped feedback |
 | Student | View own marks, component breakdown, attendance and timetable; submit course-specific faculty feedback; use own performance assistant |
 | Parent | View the linked child's academic records and timetable; no academic edits, feedback submission or assistant access |
 
-All users can change their own password. A password change signs the current session out. Profile details and academic records are otherwise read-only for students and parents. Feedback is identified, not anonymous, and resubmission updates the student's feedback for that course. Deactivation preserves academic history and blocks the account's existing sessions on their next API request.
+All users can change their own password. Administrators can explicitly reset non-admin passwords; this revokes the target account's existing sessions. Deployment never resets existing passwords. A password change signs the current session out. Profile details and academic records are otherwise read-only for students and parents. Feedback is identified, not anonymous, and resubmission updates the student's feedback for that course. Deactivation preserves academic history and blocks the account's existing sessions on their next API request.
 
 ## 1. Run in VS Code on Windows
 
@@ -72,7 +74,7 @@ To use Google Gemini from Google AI Studio:
 1. Create a Gemini API key at https://aistudio.google.com/api-keys. Check the model's current quota, billing and data-use terms. Keep the project on the Free tier without enabling billing. Use a free-tier text model such as gemini-3.5-flash-lite only if available to the project. Google may use free-tier content to improve products; use fictional records for this demonstration.
 2. In Render, open the student-university service → Environment. Store GEMINI_API_KEY as a private environment value. Never paste the key into chat, Angular source, GitHub, screenshots or public pages.
 3. Set GEMINI_MODEL to an available generateContent-compatible text model from your Google project (use its API model ID, not its display name). Set AI_ENABLED=true only when ready to allow external analysis. No model is hard-coded, because availability changes. Redeploy after saving.
-4. Sign in as a Student, open Study assistant, and explicitly consent to sending the question and scoped course names, assessment scores/maxima and attendance to Google Gemini. Without consent, the request is rejected before any provider request. Do not include personal information in the question.
+4. Sign in as a Student, open Study assistant, and explicitly consent to sending the question and scoped course names, assessment scores/maxima, attendance, and scoped campus circular/event/exam context to Google Gemini. Without consent, the request is rejected before any provider request. Do not include personal information in the question.
 5. Ask for a study plan. A successful response has mode ai and provider gemini. Provider failures are shown as errors, not disguised as local analysis. With AI_ENABLED=false, the assistant remains local and sends nothing to Google.
 
 The existing authenticated student-only route, CSRF checks, five-requests-per-minute limiter, per-student record scope, 30-second provider timeout and read-only behavior remain in place. Academic-record payloads exclude names, account IDs and feedback. The question itself is sent as typed, so it can contain personal information if the student enters it. The assistant has no tools for updating records. Obtain institutional approval and review Google's current data-use/retention terms before using real student records.
@@ -197,6 +199,6 @@ Suggested viva/demo sequence:
 
 This is a tested educational foundation, not a certified student information system. It includes no real fee payments, Aadhaar uploads, registration approval workflows, official hall tickets/certificates, backlogs/CGPA calculation, library integration, grievance processing or official transcript issuing. The screenshots show those menu areas, but they require separate workflows and data; no fake working buttons should imply otherwise. The printable report is unofficial. The reference login CAPTCHA image is not copied as a security feature; this demo uses login rate limits. Add a properly integrated provider challenge if your deployment needs CAPTCHA.
 
-Parameterized SQL, scrypt password hashing, session regeneration at login, HttpOnly/SameSite cookies, production Secure cookies, CSRF checks, input limits, scoped queries, rate limiting and audit records provide a baseline. This is not a penetration test. Production needs reviewed migrations, central/shared rate limiting for multiple instances, password reset/recovery, stronger password policies/MFA for administrators, session revocation across all devices, institutional permission/privacy controls, dependency maintenance and backup/restore drills. For a busy deployment, refactor attendance aggregation into SQL and paginate large directories/history. Never expose the local development server through an unreviewed public tunnel.
+Parameterized SQL, scrypt password hashing, session regeneration at login, HttpOnly/SameSite cookies, production Secure cookies, CSRF checks, input limits, scoped queries, rate limiting and audit records provide a baseline. This is not a penetration test. Production needs continued migration review, central/shared rate limiting for multiple instances, self-service account recovery, stronger password policies/MFA for administrators, institutional permission/privacy controls, dependency maintenance and backup/restore drills. For a busy deployment, refactor attendance aggregation into SQL and paginate large directories/history. Never expose the local development server through an unreviewed public tunnel.
 
 AI response quality is not guaranteed. Never use the assistant as the authority for exam eligibility, disciplinary action or final results.
